@@ -1,0 +1,14 @@
+{
+  "name": "game1-client",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "esbuild src/main.ts --bundle --outfile=public/bundle.js --target=es2020 --sourcemap",
+    "watch": "esbuild src/main.ts --bundle --outfile=public/bundle.js --target=es2020 --sourcemap --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.6.0"
+  }
+}

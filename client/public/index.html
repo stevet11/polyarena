@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Polyarena</title>
+<style>
+  :root {
+    --panel: rgba(0,0,0,0.45);
+    --text: #fff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #cdcdcd; font-family: Ubuntu, "Segoe UI", Arial, sans-serif; color: var(--text); user-select: none; }
+  #game { position: fixed; inset: 0; display: block; cursor: crosshair; }
+
+  .overlay { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 14px; background: rgba(0,0,0,0.35); z-index: 10; }
+  .overlay h1 { font-size: 56px; margin: 0 0 8px; text-shadow: 0 3px 0 rgba(0,0,0,0.5); letter-spacing: 2px; }
+  .overlay h2 { font-size: 36px; margin: 0; text-shadow: 0 3px 0 rgba(0,0,0,0.5); }
+  .overlay p { margin: 0; font-size: 16px; text-shadow: 0 1px 2px rgba(0,0,0,0.6); text-align: center; line-height: 1.5; }
+  .overlay input { font-size: 22px; padding: 10px 14px; border: 3px solid #444; border-radius: 6px; width: 320px; text-align: center; outline: none; }
+  .overlay button, .class-btn, .stat button { font-family: inherit; font-weight: bold; color: #fff; border: 3px solid rgba(0,0,0,0.45); border-radius: 6px; cursor: pointer; background: #00b2e1; text-shadow: 0 1px 1px rgba(0,0,0,0.4); }
+  .overlay button { font-size: 22px; padding: 10px 40px; }
+  .overlay button:hover { filter: brightness(1.1); }
+
+  #hud { display: none; position: fixed; inset: 0; pointer-events: none; z-index: 5; }
+  #hud > * { pointer-events: auto; }
+  #status { position: fixed; top: 10px; left: 50%; transform: translateX(-50%); background: var(--panel); padding: 6px 14px; border-radius: 6px; z-index: 20; display: none; }
+
+  #leaderboard { position: absolute; top: 12px; right: 12px; width: 220px; background: var(--panel); padding: 8px 10px; border-radius: 8px; }
+  #leaderboard h3 { margin: 0 0 6px; font-size: 16px; text-align: center; }
+  .lb-row { position: relative; height: 18px; margin: 3px 0; background: rgba(0,0,0,0.35); border-radius: 9px; overflow: hidden; font-size: 12px; line-height: 18px; }
+  .lb-row .lb-fill { position: absolute; inset: 0; width: 0; background: #86c280; }
+  .lb-row.me .lb-fill { background: #00b2e1; }
+  .lb-row span { position: relative; padding-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-shadow: 0 1px 1px rgba(0,0,0,0.6); }
+
+  #bottom { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); width: 420px; text-align: center; }
+  #score { font-size: 22px; font-weight: bold; text-shadow: 0 2px 0 rgba(0,0,0,0.5); margin-bottom: 4px; }
+  #xp-bar { height: 20px; background: rgba(0,0,0,0.45); border-radius: 10px; overflow: hidden; position: relative; }
+  #xp-fill { height: 100%; width: 0; background: #ffe869; transition: width 0.15s; }
+  #level { position: absolute; inset: 0; line-height: 20px; font-size: 14px; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.7); }
+
+  #stats { position: absolute; bottom: 14px; left: 12px; background: var(--panel); padding: 8px; border-radius: 8px; opacity: 0.55; transition: opacity 0.2s; }
+  #stats:hover, #stats.has-points { opacity: 1; }
+  #points { position: absolute; top: -26px; left: 0; font-weight: bold; font-size: 18px; text-shadow: 0 2px 0 rgba(0,0,0,0.5); }
+  .stat { display: flex; align-items: center; gap: 8px; margin: 3px 0; height: 22px; }
+  .stat-name { width: 130px; font-size: 12px; font-weight: bold; text-shadow: 0 1px 1px rgba(0,0,0,0.7); }
+  .stat-bar { display: flex; gap: 2px; background: rgba(0,0,0,0.4); padding: 2px; border-radius: 6px; }
+  .seg { width: 14px; height: 12px; border-radius: 3px; background: rgba(255,255,255,0.12); }
+  .seg.on { background: var(--c); }
+  .stat button { font-size: 11px; padding: 2px 6px; }
+  .stat button:disabled { opacity: 0.3; cursor: default; }
+
+  #classes { position: absolute; top: 12px; left: 12px; display: none; flex-direction: column; gap: 8px; }
+  .class-btn { width: 160px; padding: 10px; font-size: 18px; display: flex; justify-content: space-between; align-items: baseline; }
+  .class-btn small { font-size: 12px; opacity: 0.8; }
+  .class-btn:hover { filter: brightness(1.1); }
+
+  #minimap { position: absolute; bottom: 14px; right: 12px; width: 160px; height: 160px; }
+  #help { position: absolute; bottom: 190px; right: 12px; font-size: 12px; text-align: right; opacity: 0.75; text-shadow: 0 1px 1px rgba(0,0,0,0.7); line-height: 1.5; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="status"></div>
+
+<div id="start" class="overlay">
+  <h1>POLYARENA</h1>
+  <p>Shoot shapes to level up. Spend points on stats, pick a class at level 15, 30 and 45.<br>WASD to move, mouse to aim, click to shoot, E for auto-fire.</p>
+  <input id="name" maxlength="16" placeholder="Enter a name" autocomplete="off">
+  <button id="play">Play</button>
+</div>
+
+<div id="death" class="overlay">
+  <h2>You were destroyed</h2>
+  <p id="death-text"></p>
+  <button id="respawn">Play again</button>
+</div>
+
+<div id="hud">
+  <div id="leaderboard"></div>
+  <div id="classes"></div>
+  <div id="stats"><div id="points"></div></div>
+  <div id="bottom">
+    <div id="score">Score: 0</div>
+    <div id="xp-bar"><div id="xp-fill"></div><div id="level">Lvl 1</div></div>
+  </div>
+  <div id="help">1–8 upgrade stats · Y/U/I/O choose class<br>E toggle auto-fire</div>
+  <canvas id="minimap" width="160" height="160"></canvas>
+</div>
+
+<script src="bundle.js"></script>
+</body>
+</html>

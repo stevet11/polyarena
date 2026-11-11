@@ -1,0 +1,70 @@
+# Polyarena
+
+A 2D multiplayer tank arena in the diep.io genre: shoot polygon shapes for XP,
+level up, spend points on stats, branch into stronger tank classes, and fight
+other players. TypeScript + HTML canvas client, Go WebSocket server.
+
+## Run
+
+```sh
+# client bundle (once, or `npm run watch` while developing)
+cd client && npm install && npm run build
+
+# server (serves the client and the websocket on :8080)
+cd ../server && go run .
+```
+
+Open http://localhost:8080. `./run.sh` does both.
+
+Server flags: `-addr :8080`, `-static ../client/public`.
+
+## Controls
+
+| Key | Action |
+| --- | --- |
+| WASD / arrows | move |
+| mouse | aim, left button fires |
+| E | toggle auto-fire |
+| 1–8 | upgrade the matching stat |
+| Y / U / I / O | pick a class upgrade when one is offered |
+
+## Gameplay
+
+- **Shapes** — squares (10 xp), triangles (25 xp), pentagons (130 xp). The
+  centre of the map is a pentagon nest with a few huge alpha pentagons
+  (3000 xp).
+- **Levels** — 45 levels. Every level up to 28 grants a stat point, then one
+  every third level (33 total). 8 stats, 7 points max each.
+- **Classes** — Scout → (lvl 15) Twin, Marksman, Spray, Flanker → (lvl 30)
+  Trident, Cross, Twin Flank, Railgun, Cannon, Hailstorm, Thruster → (lvl 45)
+  Fan, Star, Longbow, Siege. Definitions live in `server/classes.go`;
+  barrel geometry is sent to the client so it renders whatever the server
+  defines.
+- **PvP** — free-for-all. Killing a tank grants a third of its score.
+  Fresh spawns have a 4 s shield that drops when they fire.
+
+## Architecture
+
+```
+server/
+  main.go     http + static files + /ws
+  net.go      websocket client: read/write pumps, message dispatch
+  game.go     world simulation (60 Hz), collisions, XP/levels, snapshots (20 Hz)
+  classes.go  tank class tree and barrel definitions
+client/src/
+  main.ts     input, camera, game loop
+  net.ts      websocket wrapper
+  interp.ts   snapshot buffer + interpolation (110 ms behind the server)
+  render.ts   canvas rendering: grid, shapes, bullets, tanks, minimap
+  ui.ts       HTML HUD: stats, class picker, leaderboard, xp bar, overlays
+  types.ts    protocol types
+```
+
+Protocol (JSON over the websocket):
+
+- client → server: `join {name}`, `in {dx,dy,aim,fire}`, `stat {i}`, `up {c}`
+- server → client: `init {id,w,h,classes,stats}`, `state {ts,ents,me,lb}`,
+  `dead {score,level,killer,kills}`
+
+The server is authoritative: clients only send intent. Each client receives
+only the entities inside its own (FOV-scaled) view rectangle.

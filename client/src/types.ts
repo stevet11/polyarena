@@ -20,20 +20,19 @@ export const KIND_BULLET = 1;
 export const KIND_SHAPE = 2;
 
 export interface Ent {
-  i: number;
-  k: number;
+  i: number; // entity id
+  k: number; // kind
   x: number;
   y: number;
-  r: number;
-  a: number;
-  h: number;
-  m: number;
-  s?: number;
-  c: number;
-  o?: number;
-  n?: string;
-  l?: number;
-  p?: boolean;
+  r: number; // radius
+  a: number; // rotation
+  h: number; // hp fraction 0..1
+  s?: number; // shape sides
+  c?: number; // tank class
+  l?: number; // tank level
+  n?: string; // tank name
+  p?: boolean; // tank spawn shield
+  mine?: boolean; // belongs to the viewing player
 }
 
 export interface Me {
@@ -58,7 +57,7 @@ export interface LBEntry {
   n: string;
   s: number;
   c: number;
-  me?: boolean;
+  me: boolean;
 }
 
 export interface InitMsg {
@@ -72,10 +71,9 @@ export interface InitMsg {
 
 export interface StateMsg {
   t: "state";
-  ts: number;
   ents: Ent[];
   me: Me;
-  lb: LBEntry[];
+  lb: LBEntry[] | null; // null = unchanged since the last frame
 }
 
 export interface DeadMsg {

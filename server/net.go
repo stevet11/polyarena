@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
 	"net/http"
 	"time"
@@ -21,28 +20,22 @@ type Client struct {
 	player     *Player
 	world      *World
 	camX, camY float64
+
+	// Owned by the world goroutine (accessed under World.mu).
+	knownNames map[uint32]struct{} // tank entity ids whose name this client has received
+	newNames   []uint32
+	lastLB     []byte
+	scratch    []byte
 }
 
-type clientMsg struct {
-	T    string  `json:"t"`
-	Name string  `json:"name"`
-	DX   float64 `json:"dx"`
-	DY   float64 `json:"dy"`
-	Aim  float64 `json:"aim"`
-	Fire bool    `json:"fire"`
-	I    int     `json:"i"`
-	C    int     `json:"c"`
-}
-
-func (c *Client) SendJSON(v interface{}) {
-	b, err := json.Marshal(v)
-	if err != nil {
-		log.Println("marshal:", err)
-		return
-	}
+// Send queues a binary frame. It never blocks: if the client is too slow the
+// frame is dropped and false is returned.
+func (c *Client) Send(b []byte) bool {
 	select {
 	case c.send <- b:
-	default: // slow client: drop the frame
+		return true
+	default:
+		return false
 	}
 }
 
@@ -53,9 +46,13 @@ func serveWS(w *World) http.HandlerFunc {
 			log.Println("upgrade:", err)
 			return
 		}
-		c := &Client{conn: conn, send: make(chan []byte, 16), world: w, camX: WorldW / 2, camY: WorldH / 2}
+		c := &Client{
+			conn: conn, send: make(chan []byte, 16), world: w,
+			camX: WorldW / 2, camY: WorldH / 2,
+			knownNames: map[uint32]struct{}{},
+		}
 		c.player = w.AddPlayer(c)
-		c.SendJSON(initMsg{T: "init", ID: c.player.ID, W: WorldW, H: WorldH, Classes: classes, Stats: statNames})
+		c.Send(encodeInit(c.player.ID))
 		go c.writePump()
 		c.readPump()
 	}
@@ -66,20 +63,23 @@ func (c *Client) readPump() {
 		c.world.RemovePlayer(c.player)
 		close(c.send)
 	}()
-	c.conn.SetReadLimit(4096)
+	c.conn.SetReadLimit(512)
 	c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
 		return nil
 	})
 	for {
-		_, data, err := c.conn.ReadMessage()
+		mt, data, err := c.conn.ReadMessage()
 		if err != nil {
 			return
 		}
 		c.conn.SetReadDeadline(time.Now().Add(60 * time.Second))
-		var m clientMsg
-		if err := json.Unmarshal(data, &m); err != nil {
+		if mt != websocket.BinaryMessage {
+			continue
+		}
+		m, ok := decodeClientMsg(data)
+		if !ok {
 			continue
 		}
 		c.handle(&m)
@@ -90,15 +90,15 @@ func (c *Client) handle(m *clientMsg) {
 	w, p := c.world, c.player
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	switch m.T {
-	case "join":
+	switch m.Type {
+	case MsgJoin:
 		w.Join(p, m.Name)
-	case "in":
-		p.In = Input{DX: clamp(m.DX, -1, 1), DY: clamp(m.DY, -1, 1), Aim: m.Aim, Fire: m.Fire}
-	case "stat":
-		w.UpgradeStat(p, m.I)
-	case "up":
-		w.UpgradeClass(p, m.C)
+	case MsgInput:
+		p.In = m.Input
+	case MsgStat:
+		w.UpgradeStat(p, m.Index)
+	case MsgUpgrade:
+		w.UpgradeClass(p, m.Index)
 	}
 }
 
@@ -126,7 +126,7 @@ func (c *Client) writePump() {
 				return
 			}
 			c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-			if err := c.conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+			if err := c.conn.WriteMessage(websocket.BinaryMessage, msg); err != nil {
 				return
 			}
 		case <-ping.C:

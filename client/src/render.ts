@@ -57,7 +57,6 @@ export class Renderer {
     cam: { x: number; y: number; zoom: number },
     world: { w: number; h: number },
     classes: ClassDef[],
-    myId: number,
   ): void {
     const { ctx, width, height, dpr } = this;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -109,10 +108,10 @@ export class Renderer {
           this.drawShape(e);
           break;
         case KIND_BULLET:
-          this.drawBullet(e, e.o === myId);
+          this.drawBullet(e, !!e.mine);
           break;
         case KIND_TANK:
-          this.drawTank(e, classes[e.c], e.o === myId);
+          this.drawTank(e, classes[e.c ?? 0], !!e.mine);
           break;
       }
     }
@@ -200,7 +199,7 @@ export class Renderer {
   private drawOverlay(e: Ent, zoom: number): void {
     const { ctx } = this;
     if (e.k === KIND_BULLET) return;
-    const damaged = e.h < e.m - 0.5;
+    const damaged = e.h < 0.995;
     if (e.k === KIND_TANK) {
       ctx.save();
       ctx.font = `bold ${Math.max(14, 16 / Math.sqrt(zoom))}px Ubuntu, Arial, sans-serif`;
@@ -223,7 +222,7 @@ export class Renderer {
       roundRect(ctx, x - 1, y - 1, w + 2, h + 2, h / 2 + 1);
       ctx.fill();
       ctx.fillStyle = COLORS.hp;
-      roundRect(ctx, x, y, Math.max(0, (w * e.h) / e.m), h, h / 2);
+      roundRect(ctx, x, y, Math.max(0, w * e.h), h, h / 2);
       ctx.fill();
     }
   }

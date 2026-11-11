@@ -12,7 +12,6 @@ const interp = new Interpolator();
 
 let classes: ClassDef[] = [];
 let world = { w: 6000, h: 6000 };
-let myId = 0;
 let me: Me | null = null;
 let playing = false;
 const cam = { x: 3000, y: 3000, zoom: 1 };
@@ -83,7 +82,6 @@ net.onClose = () => {
 net.onMessage = (m: ServerMsg) => {
   switch (m.t) {
     case "init":
-      myId = m.id;
       world = { w: m.w, h: m.h };
       classes = m.classes;
       ui.setClasses(classes);
@@ -92,10 +90,9 @@ net.onMessage = (m: ServerMsg) => {
     case "state":
       interp.push(m);
       me = m.me;
-      if (playing) {
-        ui.updateMe(m.me);
-        ui.updateLeaderboard(m.lb);
-      }
+      // the server only sends the leaderboard when it changes, so always apply it
+      if (m.lb) ui.updateLeaderboard(m.lb);
+      if (playing) ui.updateMe(m.me);
       break;
     case "dead":
       playing = false;
@@ -154,7 +151,7 @@ function frame(now: number): void {
   } else {
     cam.zoom = renderer.zoomFor(1);
   }
-  renderer.draw(ents, cam, world, classes, myId);
+  renderer.draw(ents, cam, world, classes);
   if (playing) drawMinimap(ui.minimap, world, me && me.alive ? { x: cam.x, y: cam.y } : null);
   requestAnimationFrame(frame);
 }

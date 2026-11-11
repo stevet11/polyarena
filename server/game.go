@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/binary"
 	"math"
 	"math/rand"
 	"sort"
@@ -196,17 +198,11 @@ func (w *World) RemovePlayer(p *Player) {
 }
 
 func (w *World) Join(p *Player, name string) {
-	if len(name) > 16 {
-		name = name[:16]
-	}
-	if name == "" {
-		name = "Unnamed"
-	}
-	p.Name = name
-	p.Joined = true
 	if p.Alive {
-		return
+		return // no renaming mid-life: clients cache tank names by entity id
 	}
+	p.Name = sanitizeName(name)
+	p.Joined = true
 	// reset progression on each spawn
 	p.XP, p.Score, p.Level, p.Points, p.Kills = 0, 0, 1, 0, 0
 	p.Stats = [NumStats]int{}
@@ -479,7 +475,7 @@ func (w *World) onDeath(e *Entity) {
 			w.addXP(killer, p.Score/3+20)
 		}
 		if p.Client != nil {
-			p.Client.SendJSON(deathMsg{T: "dead", Score: p.Score, Level: p.Level, Killer: kname, Kills: p.Kills})
+			p.Client.Send(encodeDead(p.Score, p.Level, kname, p.Kills))
 		}
 	}
 }
@@ -524,8 +520,8 @@ func (w *World) fireBarrel(p *Player, e *Entity, b *Barrel) {
 	bul := &Entity{
 		ID: w.newID(), Kind: KindBullet, Owner: p.ID,
 		X: mx, Y: my, Rot: ang,
-		VX: math.Cos(ang)*spd + e.VX*0.2,
-		VY: math.Sin(ang)*spd + e.VY*0.2,
+		VX:     math.Cos(ang)*spd + e.VX*0.2,
+		VY:     math.Sin(ang)*spd + e.VY*0.2,
 		Radius: rad, HP: pen, MaxHP: pen, Damage: dmg,
 		Mass: 0.12 * (rad / 11) * (rad / 11), Life: 2.0 * b.Life,
 	}
@@ -655,130 +651,163 @@ func (w *World) damage(src, dst *Entity) {
 
 // ---------- snapshots ----------
 
-type sEnt struct {
-	I uint32  `json:"i"`
-	K uint8   `json:"k"`
-	X float64 `json:"x"`
-	Y float64 `json:"y"`
-	R float64 `json:"r"`
-	A float64 `json:"a"`
-	H float64 `json:"h"`
-	M float64 `json:"m"`
-	S int     `json:"s,omitempty"`
-	C int     `json:"c"`
-	O uint32  `json:"o,omitempty"`
-	N string  `json:"n,omitempty"`
-	L int     `json:"l,omitempty"`
-	P bool    `json:"p,omitempty"` // shielded
-}
-
-type sMe struct {
-	Ent    uint32  `json:"ent"`
-	X      float64 `json:"x"`
-	Y      float64 `json:"y"`
-	HP     float64 `json:"hp"`
-	MaxHP  float64 `json:"mhp"`
-	Level  int     `json:"lvl"`
-	XP     int     `json:"xp"`
-	XPNext int     `json:"xpn"`
-	Score  int     `json:"sc"`
-	Points int     `json:"pts"`
-	Stats  [8]int  `json:"stats"`
-	Class  int     `json:"cls"`
-	FOV    float64 `json:"fov"`
-	Upg    []int   `json:"upg"`
-	Alive  bool    `json:"alive"`
-}
-
-type sLB struct {
-	N  string `json:"n"`
-	S  int    `json:"s"`
-	C  int    `json:"c"`
-	Me bool   `json:"me,omitempty"`
-}
-
-type stateMsg struct {
-	T    string `json:"t"`
-	TS   int64  `json:"ts"`
-	Ents []sEnt `json:"ents"`
-	Me   sMe    `json:"me"`
-	LB   []sLB  `json:"lb"`
-}
-
-type deathMsg struct {
-	T      string `json:"t"`
-	Score  int    `json:"score"`
-	Level  int    `json:"level"`
-	Killer string `json:"killer"`
-	Kills  int    `json:"kills"`
-}
-
-type initMsg struct {
-	T       string   `json:"t"`
-	ID      uint32   `json:"id"`
-	W       float64  `json:"w"`
-	H       float64  `json:"h"`
-	Classes []Class  `json:"classes"`
-	Stats   []string `json:"stats"`
-}
-
-func r1(v float64) float64 { return math.Round(v*10) / 10 }
-
 func (w *World) broadcast() {
-	// leaderboard
 	lb := make([]*Player, 0, len(w.players))
 	for _, p := range w.players {
 		if p.Alive {
 			lb = append(lb, p)
 		}
 	}
-	sort.Slice(lb, func(i, j int) bool { return lb[i].Score > lb[j].Score })
+	sort.Slice(lb, func(i, j int) bool {
+		if lb[i].Score != lb[j].Score {
+			return lb[i].Score > lb[j].Score
+		}
+		return lb[i].ID < lb[j].ID // stable order so ties don't resend the board
+	})
 	if len(lb) > 10 {
 		lb = lb[:10]
 	}
-	ts := time.Now().UnixMilli()
-
 	for _, p := range w.players {
 		if p.Client == nil || !p.Joined {
 			continue
 		}
-		cx, cy, fov := p.Client.camX, p.Client.camY, 1.0
-		if p.Ent != nil {
-			cx, cy, fov = p.Ent.X, p.Ent.Y, p.fov()
-			p.Client.camX, p.Client.camY = cx, cy
-		}
-		hw, hh := 1150*fov+150, 700*fov+150
+		w.sendState(p, lb)
+	}
+}
 
-		msg := stateMsg{T: "state", TS: ts, Ents: make([]sEnt, 0, 128)}
-		for _, e := range w.ents {
-			if e.X < cx-hw-e.Radius || e.X > cx+hw+e.Radius || e.Y < cy-hh-e.Radius || e.Y > cy+hh+e.Radius {
-				continue
+func (w *World) sendState(p *Player, lb []*Player) {
+	c := p.Client
+	cx, cy, fov := c.camX, c.camY, 1.0
+	if p.Ent != nil {
+		cx, cy, fov = p.Ent.X, p.Ent.Y, p.fov()
+		c.camX, c.camY = cx, cy
+	}
+	hw, hh := 1150*fov+150, 700*fov+150
+
+	buf := wbuf{b: c.scratch[:0]}
+	buf.u8(MsgState)
+
+	// me
+	if p.Ent != nil {
+		buf.u32(p.Ent.ID)
+	} else {
+		buf.u32(0)
+	}
+	buf.f32(cx)
+	buf.f32(cy)
+	if p.Ent != nil {
+		buf.f32(p.Ent.HP)
+		buf.f32(p.Ent.MaxHP)
+	} else {
+		buf.f32(0)
+		buf.f32(0)
+	}
+	buf.u8c(p.Level)
+	buf.u32c(p.XP)
+	buf.u32c(xpToNext[p.Level])
+	buf.u32c(p.Score)
+	buf.u8c(p.Points)
+	for _, s := range p.Stats {
+		buf.u8c(s)
+	}
+	buf.u8c(p.Class)
+	buf.f32(fov)
+	if p.Alive {
+		buf.u8(1)
+	} else {
+		buf.u8(0)
+	}
+	upAt := len(buf.b)
+	buf.u8(0)
+	if p.Ent != nil {
+		n := 0
+		for _, u := range classes[p.Class].Upgrades {
+			if p.Level >= classes[u].Level {
+				buf.u8c(u)
+				n++
 			}
-			s := sEnt{I: e.ID, K: uint8(e.Kind), X: r1(e.X), Y: r1(e.Y), R: r1(e.Radius),
-				A: math.Round(e.Rot*100) / 100, H: r1(e.HP), M: r1(e.MaxHP), S: e.Sides, O: e.Owner}
-			if e.Kind == KindTank && e.Player != nil {
-				s.C = e.Player.Class
-				s.N = e.Player.Name
-				s.L = e.Player.Level
-				s.P = e.Shield > 0
+		}
+		buf.b[upAt] = uint8(n)
+	}
+
+	// entities
+	countAt := len(buf.b)
+	buf.u16(0)
+	n := 0
+	c.newNames = c.newNames[:0]
+	for _, e := range w.ents {
+		if n == 65535 {
+			break
+		}
+		if e.X < cx-hw-e.Radius || e.X > cx+hw+e.Radius || e.Y < cy-hh-e.Radius || e.Y > cy+hh+e.Radius {
+			continue
+		}
+		n++
+		buf.u32(e.ID)
+		buf.u8(uint8(e.Kind))
+		buf.pos(e.X)
+		buf.pos(e.Y)
+		buf.u16(quant16(e.Radius * 10))
+		switch e.Kind {
+		case KindTank:
+			var flags uint8
+			if e.Owner == p.ID {
+				flags |= FlagMine
 			}
-			msg.Ents = append(msg.Ents, s)
-		}
-		me := sMe{X: r1(cx), Y: r1(cy), Level: p.Level, XP: p.XP, XPNext: xpToNext[p.Level],
-			Score: p.Score, Points: p.Points, Stats: p.Stats, Class: p.Class, FOV: fov, Alive: p.Alive, Upg: []int{}}
-		if p.Ent != nil {
-			me.Ent, me.HP, me.MaxHP = p.Ent.ID, r1(p.Ent.HP), r1(p.Ent.MaxHP)
-			for _, u := range classes[p.Class].Upgrades {
-				if p.Level >= classes[u].Level {
-					me.Upg = append(me.Upg, u)
-				}
+			if e.Shield > 0 {
+				flags |= FlagShield
 			}
+			_, known := c.knownNames[e.ID]
+			if !known {
+				flags |= FlagName
+			}
+			buf.u8(flags)
+			buf.angle(e.Rot)
+			buf.frac(e.HP, e.MaxHP)
+			cls, lvl, name := 0, 1, ""
+			if e.Player != nil {
+				cls, lvl, name = e.Player.Class, e.Player.Level, e.Player.Name
+			}
+			buf.u8c(cls)
+			buf.u8c(lvl)
+			if !known {
+				buf.str(name)
+				c.newNames = append(c.newNames, e.ID)
+			}
+		case KindBullet:
+			var flags uint8
+			if e.Owner == p.ID {
+				flags |= FlagMine
+			}
+			buf.u8(flags)
+		case KindShape:
+			buf.u8c(e.Sides)
+			buf.angle(e.Rot)
+			buf.frac(e.HP, e.MaxHP)
 		}
-		msg.Me = me
-		msg.LB = make([]sLB, len(lb))
-		for i, q := range lb {
-			msg.LB[i] = sLB{N: q.Name, S: q.Score, C: q.Class, Me: q == p}
+	}
+	binary.LittleEndian.PutUint16(buf.b[countAt:], uint16(n))
+
+	// leaderboard, only when it changed for this viewer
+	lbBytes := encodeLeaderboard(lb, p)
+	lbChanged := !bytes.Equal(lbBytes, c.lastLB)
+	if lbChanged {
+		buf.u8(1)
+		buf.b = append(buf.b, lbBytes...)
+	} else {
+		buf.u8(0)
+	}
+
+	c.scratch = buf.b
+	// The frame is copied because scratch is reused next tick. Names and the
+	// leaderboard only count as delivered once the frame is actually queued;
+	// a dropped frame means they are resent next time.
+	if c.Send(append([]byte(nil), buf.b...)) {
+		for _, id := range c.newNames {
+			c.knownNames[id] = struct{}{}
 		}
-		p.Client.SendJSON(msg)
+		if lbChanged {
+			c.lastLB = lbBytes
+		}
 	}
 }

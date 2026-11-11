@@ -60,11 +60,18 @@ client/src/
   types.ts    protocol types
 ```
 
-Protocol (JSON over the websocket):
+Protocol: little-endian binary websocket frames, each starting with a one-byte
+type tag. The full layout is documented at the top of `server/protocol.go`;
+`client/src/protocol.ts` is its mirror and the two must change together.
 
-- client → server: `join {name}`, `in {dx,dy,aim,fire}`, `stat {i}`, `up {c}`
-- server → client: `init {id,w,h,classes,stats}`, `state {ts,ents,me,lb}`,
-  `dead {score,level,killer,kills}`
+- client → server: `Join`, `Input` (6 bytes), `Stat`, `Upgrade`
+- server → client: `Init` (world size, stat names, class tree), `State`
+  (snapshot), `Dead`
 
 The server is authoritative: clients only send intent. Each client receives
-only the entities inside its own (FOV-scaled) view rectangle.
+only the entities inside its own (FOV-scaled) view rectangle. Positions are
+u16 fixed-point (0.1 px), angles u16, HP a u8 fraction, and "is this mine"
+a flag, so a typical entity costs 12–16 bytes. Tank names are sent the first
+time a client sees that tank and the leaderboard only when it changes; both
+are marked delivered only if the frame was actually queued, so a frame dropped
+for a slow client doesn't lose them.

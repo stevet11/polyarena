@@ -16,7 +16,8 @@ cd ../server && go run .
 
 Open http://localhost:8080. `./run.sh` does both.
 
-Server flags: `-addr :8080`, `-static ../client/public`.
+Server flags: `-addr :8080`, `-static ../client/public`, `-mode ffa|teams`,
+`-teams 2` (2–4 teams in teams mode). For example `./run.sh -mode teams -teams 3`.
 
 ## Controls
 
@@ -40,8 +41,18 @@ Server flags: `-addr :8080`, `-static ../client/public`.
   Fan, Star, Longbow, Siege. Definitions live in `server/classes.go`;
   barrel geometry is sent to the client so it renders whatever the server
   defines.
-- **PvP** — free-for-all. Killing a tank grants a third of its score.
-  Fresh spawns have a 4 s shield that drops when they fire.
+- **PvP** — the server runs one of two modes:
+  - **Free-for-all** (`-mode ffa`, the default): every tank is hostile. Your
+    tank is blue, everyone else is red.
+  - **Teams** (`-mode teams -teams N`): players are placed on the smallest of
+    Blue, Red, Green and Purple when they join and keep that team across
+    respawns. Teammates cannot damage each other, allied bullets pass through
+    allied tanks and bullets, and each team spawns in its own corner of the
+    map. The leaderboard shows team totals above the top players, and your
+    own tank gets a white centre dot so you can tell it from teammates.
+
+  Killing a tank grants a third of its score. Fresh spawns have a 4 s shield
+  that drops when they fire.
 
 ## Architecture
 
@@ -51,6 +62,7 @@ server/
   net.go      websocket client: read/write pumps, message dispatch
   game.go     world simulation (60 Hz), collisions, XP/levels, snapshots (20 Hz)
   classes.go  tank class tree and barrel definitions
+  teams.go    game modes: team assignment, team spawns, friendly-fire rules
 client/src/
   main.ts     input, camera, game loop
   net.ts      websocket wrapper
@@ -65,8 +77,8 @@ type tag. The full layout is documented at the top of `server/protocol.go`;
 `client/src/protocol.ts` is its mirror and the two must change together.
 
 - client → server: `Join`, `Input` (6 bytes), `Stat`, `Upgrade`
-- server → client: `Init` (world size, stat names, class tree), `State`
-  (snapshot), `Dead`
+- server → client: `Init` (world size, mode and team names, stat names, class
+  tree), `State` (snapshot), `Dead`
 
 The server is authoritative: clients only send intent. Each client receives
 only the entities inside its own (FOV-scaled) view rectangle. Positions are

@@ -12,6 +12,7 @@ package main
 //
 // server -> client
 //   Init  u8 1, u32 playerId, f32 worldW, f32 worldH,
+//         u8 mode (0 ffa, 1 teams), u8 nTeams, nTeams×str team name,
 //         u8 nStats, nStats×str,
 //         u8 nClasses, per class: str name, u8 level, f32 fov,
 //           u8 nBarrels, per barrel: f32 angle, offX, length, width, widthEnd,
@@ -19,12 +20,15 @@ package main
 //   State u8 2, me, u16 nEnts, nEnts×entity, u8 hasLB, [leaderboard]
 //     me:     u32 entId, f32 x, f32 y, f32 hp, f32 maxHp, u8 level, u32 xp,
 //             u32 xpNext, u32 score, u8 points, 8×u8 stats, u8 class,
-//             f32 fov, u8 alive, u8 nUpg, nUpg×u8
+//             f32 fov, u8 alive, u8 team, u8 nUpg, nUpg×u8
 //     entity: u32 id, u8 kind, u16 x (pos), u16 y (pos), u16 radius*10, then
-//       tank:   u8 flags, u16 angle, u8 hp frac, u8 class, u8 level, [str name if FlagName]
-//       bullet: u8 flags
+//       tank:   u8 flags, u16 angle, u8 hp frac, u8 class, u8 level, u8 team,
+//               [str name if FlagName]
+//       bullet: u8 flags, u8 team
 //       shape:  u8 sides, u16 angle, u8 hp frac
-//     leaderboard: u8 n, per row: str name, u32 score, u8 class, u8 isMe
+//     leaderboard: u8 n, per row: str name, u32 score, u8 class, u8 team, u8 isMe,
+//                  then u8 nTeams, nTeams×u32 team score
+//   Teams are 1-based; team 0 means none (FFA).
 //   Dead  u8 3, u32 score, u8 level, str killer, u16 kills
 //
 // pos   = round((v + PosOffset) * PosScale) clamped to u16
@@ -207,12 +211,17 @@ func sanitizeName(s string) string {
 
 // ---------- server messages ----------
 
-func encodeInit(playerID uint32) []byte {
+func encodeInit(playerID uint32, mode, nTeams int) []byte {
 	w := wbuf{b: make([]byte, 0, 1024)}
 	w.u8(MsgInit)
 	w.u32(playerID)
 	w.f32(WorldW)
 	w.f32(WorldH)
+	w.u8c(mode)
+	w.u8c(nTeams)
+	for i := 0; i < nTeams; i++ {
+		w.str(teamNames[i])
+	}
 	w.u8(uint8(len(statNames)))
 	for _, s := range statNames {
 		w.str(s)
@@ -248,18 +257,28 @@ func encodeDead(score, level int, killer string, kills int) []byte {
 	return w.b
 }
 
-func encodeLeaderboard(lb []*Player, viewer *Player) []byte {
-	w := wbuf{b: make([]byte, 0, 160)}
+// teamScores is indexed by team id (index 0 unused) or nil in FFA.
+func encodeLeaderboard(lb []*Player, viewer *Player, teamScores []int) []byte {
+	w := wbuf{b: make([]byte, 0, 192)}
 	w.u8(uint8(len(lb)))
 	for _, q := range lb {
 		w.str(q.Name)
 		w.u32c(q.Score)
 		w.u8c(q.Class)
+		w.u8(q.Team)
 		if q == viewer {
 			w.u8(1)
 		} else {
 			w.u8(0)
 		}
+	}
+	if len(teamScores) == 0 {
+		w.u8(0)
+		return w.b
+	}
+	w.u8(uint8(len(teamScores) - 1))
+	for _, s := range teamScores[1:] {
+		w.u32c(s)
 	}
 	return w.b
 }

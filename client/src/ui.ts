@@ -1,4 +1,5 @@
-import type { ClassDef, LBEntry, Me } from "./types";
+import { COLORS } from "./render";
+import type { ClassDef, Leaderboard, Me } from "./types";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
@@ -22,13 +23,27 @@ export class UI {
   pointsText = $<HTMLDivElement>("points");
   status = $<HTMLDivElement>("status");
   minimap = $<HTMLCanvasElement>("minimap");
+  modeText = $<HTMLDivElement>("mode");
+  teamText = $<HTMLDivElement>("team");
 
   onStat: (i: number) => void = () => {};
   onClass: (c: number) => void = () => {};
 
   private statRows: { fill: HTMLDivElement[]; btn: HTMLButtonElement }[] = [];
   private classDefs: ClassDef[] = [];
+  private teamNames: string[] = [];
   private lastUpg = "";
+  private lastTeam = -1;
+
+  setTeams(names: string[]): void {
+    this.teamNames = names;
+    this.lastTeam = -1;
+    this.modeText.textContent = names.length ? `Team mode: ${names.join(" vs ")}` : "Free-for-all";
+  }
+
+  private teamColor(t: number): string {
+    return COLORS.teams[(t - 1) % COLORS.teams.length];
+  }
 
   buildStats(names: string[]): void {
     this.stats.innerHTML = "";
@@ -71,6 +86,13 @@ export class UI {
     this.levelText.textContent = `Lvl ${me.lvl} ${cls}`;
     this.xpFill.style.width = `${me.lvl >= 45 ? 100 : (100 * me.xp) / Math.max(1, me.xpn)}%`;
     this.pointsText.textContent = me.pts > 0 ? `x${me.pts}` : "";
+    if (me.team !== this.lastTeam) {
+      this.lastTeam = me.team;
+      const name = this.teamNames[me.team - 1];
+      this.teamText.style.display = me.team && name ? "block" : "none";
+      this.teamText.textContent = name ? `Team ${name}` : "";
+      this.teamText.style.color = me.team ? this.teamColor(me.team) : "";
+    }
     this.stats.classList.toggle("has-points", me.pts > 0);
     this.statRows.forEach((row, i) => {
       const v = me.stats[i] ?? 0;
@@ -98,15 +120,34 @@ export class UI {
     this.classes.style.display = me.upg.length ? "flex" : "none";
   }
 
-  updateLeaderboard(lb: LBEntry[]): void {
-    const max = lb.length ? lb[0].s : 1;
+  updateLeaderboard(lb: Leaderboard): void {
     this.lb.innerHTML = "<h3>Leaderboard</h3>";
-    for (const e of lb) {
+    if (lb.teams.length) {
+      const tmax = Math.max(1, ...lb.teams);
+      lb.teams.forEach((score, i) => {
+        const row = document.createElement("div");
+        row.className = "lb-row team";
+        const fill = document.createElement("div");
+        fill.className = "lb-fill";
+        fill.style.width = `${Math.max(4, (100 * score) / tmax)}%`;
+        fill.style.background = this.teamColor(i + 1);
+        const txt = document.createElement("span");
+        txt.textContent = `${this.teamNames[i] ?? `Team ${i + 1}`} — ${score.toLocaleString()}`;
+        row.append(fill, txt);
+        this.lb.appendChild(row);
+      });
+      const hr = document.createElement("div");
+      hr.className = "lb-sep";
+      this.lb.appendChild(hr);
+    }
+    const max = lb.rows.length ? lb.rows[0].s : 1;
+    for (const e of lb.rows) {
       const row = document.createElement("div");
       row.className = "lb-row" + (e.me ? " me" : "");
       const fill = document.createElement("div");
       fill.className = "lb-fill";
       fill.style.width = `${Math.max(4, (100 * e.s) / Math.max(1, max))}%`;
+      if (e.t) fill.style.background = this.teamColor(e.t);
       const txt = document.createElement("span");
       txt.textContent = `${e.n} — ${e.s.toLocaleString()}`;
       row.append(fill, txt);

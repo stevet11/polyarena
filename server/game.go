@@ -70,6 +70,7 @@ type Entity struct {
 	Shield    float64 // tanks: spawn protection remaining
 	DriftX    float64 // shapes: wander velocity
 	DriftY    float64
+	Team      uint8 // tanks and bullets: owner's team, 0 in FFA
 	Dead      bool
 	LastHitBy uint32 // player id
 	hits      map[uint32]float64
@@ -99,6 +100,7 @@ type Player struct {
 	Alive     bool
 	Joined    bool
 	Kills     int
+	Team      uint8 // 0 in FFA
 }
 
 var xpToNext [MaxLevel + 1]int
@@ -147,10 +149,17 @@ type World struct {
 	nextID       uint32
 	tick         uint64
 	targetShapes int // shapes are respawned to maintain this count
+	mode         int // ModeFFA or ModeTeams
+	nTeams       int // number of teams in ModeTeams, 0 otherwise
 }
 
-func NewWorld() *World {
-	w := &World{players: map[uint32]*Player{}, targetShapes: TargetShapes}
+func NewWorld(mode, nTeams int) *World {
+	if mode != ModeTeams {
+		mode, nTeams = ModeFFA, 0
+	} else {
+		nTeams = clampInt(nTeams, 2, MaxTeams)
+	}
+	w := &World{players: map[uint32]*Player{}, targetShapes: TargetShapes, mode: mode, nTeams: nTeams}
 	for i := 0; i < w.targetShapes; i++ {
 		w.spawnShape()
 	}
@@ -202,6 +211,9 @@ func (w *World) Join(p *Player, name string) {
 		return // no renaming mid-life: clients cache tank names by entity id
 	}
 	p.Name = sanitizeName(name)
+	if !p.Joined || p.Team == 0 || int(p.Team) > w.nTeams {
+		p.Team = w.pickTeam() // keep the team across respawns
+	}
 	p.Joined = true
 	// reset progression on each spawn
 	p.XP, p.Score, p.Level, p.Points, p.Kills = 0, 0, 1, 0, 0
@@ -211,13 +223,17 @@ func (w *World) Join(p *Player, name string) {
 	p.In = Input{}
 
 	e := &Entity{
-		ID: w.newID(), Kind: KindTank, Owner: p.ID, Player: p,
+		ID: w.newID(), Kind: KindTank, Owner: p.ID, Player: p, Team: p.Team,
 		Radius: p.radius(), Mass: 1, Shield: SpawnShield,
 	}
 	e.MaxHP = p.maxHP()
 	e.HP = e.MaxHP
 	e.BodyDmg = p.bodyDmg()
-	e.X, e.Y = w.findSpawn()
+	if p.Team != 0 {
+		e.X, e.Y = w.teamSpawn(p.Team)
+	} else {
+		e.X, e.Y = w.findSpawn()
+	}
 	w.ents = append(w.ents, e)
 	p.Ent = e
 	p.Alive = true
@@ -518,7 +534,7 @@ func (w *World) fireBarrel(p *Player, e *Entity, b *Barrel) {
 	dmg := (7 + 3*float64(p.Stats[StatBulletDmg])) * b.Damage
 	pen := (8 + 4*float64(p.Stats[StatBulletPen])) * b.Pen
 	bul := &Entity{
-		ID: w.newID(), Kind: KindBullet, Owner: p.ID,
+		ID: w.newID(), Kind: KindBullet, Owner: p.ID, Team: p.Team,
 		X: mx, Y: my, Rot: ang,
 		VX:     math.Cos(ang)*spd + e.VX*0.2,
 		VY:     math.Sin(ang)*spd + e.VY*0.2,
@@ -554,10 +570,8 @@ func (w *World) collisions() {
 }
 
 func (w *World) collide(a, b *Entity) {
-	if a.Kind == KindBullet && b.Kind == KindBullet && a.Owner == b.Owner {
-		return
-	}
-	if (a.Kind == KindBullet && b.Kind == KindTank || a.Kind == KindTank && b.Kind == KindBullet) && a.Owner == b.Owner {
+	// allied bullets pass through each other and through allied tanks
+	if (a.Kind == KindBullet || b.Kind == KindBullet) && sameTeam(a, b) {
 		return
 	}
 	dx, dy := b.X-a.X, b.Y-a.Y
@@ -600,8 +614,8 @@ func (w *World) collide(a, b *Entity) {
 	// bullets never receive impulses; bullet-on-body knockback is applied once
 	// per damage event below so it doesn't scale with overlap time
 
-	// damage (rate limited per pair); shapes only bump each other
-	if a.Kind == KindShape && b.Kind == KindShape {
+	// damage (rate limited per pair); shapes and teammates only bump each other
+	if a.Kind == KindShape && b.Kind == KindShape || sameTeam(a, b) {
 		return
 	}
 	if a.hits[b.ID] > 0 || b.hits[a.ID] > 0 {
@@ -667,15 +681,16 @@ func (w *World) broadcast() {
 	if len(lb) > 10 {
 		lb = lb[:10]
 	}
+	ts := w.teamScores()
 	for _, p := range w.players {
 		if p.Client == nil || !p.Joined {
 			continue
 		}
-		w.sendState(p, lb)
+		w.sendState(p, lb, ts)
 	}
 }
 
-func (w *World) sendState(p *Player, lb []*Player) {
+func (w *World) sendState(p *Player, lb []*Player, teamScores []int) {
 	c := p.Client
 	cx, cy, fov := c.camX, c.camY, 1.0
 	if p.Ent != nil {
@@ -717,6 +732,7 @@ func (w *World) sendState(p *Player, lb []*Player) {
 	} else {
 		buf.u8(0)
 	}
+	buf.u8(p.Team)
 	upAt := len(buf.b)
 	buf.u8(0)
 	if p.Ent != nil {
@@ -770,6 +786,7 @@ func (w *World) sendState(p *Player, lb []*Player) {
 			}
 			buf.u8c(cls)
 			buf.u8c(lvl)
+			buf.u8(e.Team)
 			if !known {
 				buf.str(name)
 				c.newNames = append(c.newNames, e.ID)
@@ -780,6 +797,7 @@ func (w *World) sendState(p *Player, lb []*Player) {
 				flags |= FlagMine
 			}
 			buf.u8(flags)
+			buf.u8(e.Team)
 		case KindShape:
 			buf.u8c(e.Sides)
 			buf.angle(e.Rot)
@@ -789,7 +807,7 @@ func (w *World) sendState(p *Player, lb []*Player) {
 	binary.LittleEndian.PutUint16(buf.b[countAt:], uint16(n))
 
 	// leaderboard, only when it changed for this viewer
-	lbBytes := encodeLeaderboard(lb, p)
+	lbBytes := encodeLeaderboard(lb, p, teamScores)
 	lbChanged := !bytes.Equal(lbBytes, c.lastLB)
 	if lbChanged {
 		buf.u8(1)

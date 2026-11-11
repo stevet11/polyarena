@@ -31,9 +31,14 @@
   .lb-row { position: relative; height: 18px; margin: 3px 0; background: rgba(0,0,0,0.35); border-radius: 9px; overflow: hidden; font-size: 12px; line-height: 18px; }
   .lb-row .lb-fill { position: absolute; inset: 0; width: 0; background: #86c280; }
   .lb-row.me .lb-fill { background: #00b2e1; }
+  .lb-row.me span { font-weight: bold; }
+  .lb-row.team { height: 22px; line-height: 22px; font-size: 13px; font-weight: bold; }
+  .lb-sep { height: 1px; margin: 6px 2px; background: rgba(255,255,255,0.25); }
   .lb-row span { position: relative; padding-left: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; text-shadow: 0 1px 1px rgba(0,0,0,0.6); }
 
   #bottom { position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); width: 420px; text-align: center; }
+  #team { font-size: 15px; font-weight: bold; text-shadow: 0 1px 0 rgba(0,0,0,0.6); display: none; }
+  #mode { font-size: 14px; opacity: 0.85; text-shadow: 0 1px 2px rgba(0,0,0,0.6); }
   #score { font-size: 22px; font-weight: bold; text-shadow: 0 2px 0 rgba(0,0,0,0.5); margin-bottom: 4px; }
   #xp-bar { height: 20px; background: rgba(0,0,0,0.45); border-radius: 10px; overflow: hidden; position: relative; }
   #xp-fill { height: 100%; width: 0; background: #ffe869; transition: width 0.15s; }
@@ -66,6 +71,7 @@
 <div id="start" class="overlay">
   <h1>POLYARENA</h1>
   <p>Shoot shapes to level up. Spend points on stats, pick a class at level 15, 30 and 45.<br>WASD to move, mouse to aim, click to shoot, E for auto-fire.</p>
+  <div id="mode"></div>
   <input id="name" maxlength="16" placeholder="Enter a name" autocomplete="off">
   <button id="play">Play</button>
 </div>
@@ -81,6 +87,7 @@
   <div id="classes"></div>
   <div id="stats"><div id="points"></div></div>
   <div id="bottom">
+    <div id="team"></div>
     <div id="score">Score: 0</div>
     <div id="xp-bar"><div id="xp-fill"></div><div id="level">Lvl 1</div></div>
   </div>

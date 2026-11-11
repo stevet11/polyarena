@@ -1,7 +1,7 @@
 // Binary wire protocol. Keep in sync with server/protocol.go, which documents
 // the exact layout of every message.
 
-import type { ClassDef, DeadMsg, Ent, InitMsg, LBEntry, Me, ServerMsg, StateMsg } from "./types";
+import type { ClassDef, DeadMsg, Ent, InitMsg, Leaderboard, Me, ServerMsg, StateMsg } from "./types";
 import { KIND_BULLET, KIND_SHAPE, KIND_TANK } from "./types";
 
 const MSG_JOIN = 1;
@@ -94,6 +94,9 @@ export class Decoder {
     const id = r.u32();
     const w = r.f32();
     const h = r.f32();
+    const mode = r.u8();
+    const teams: string[] = [];
+    for (let n = r.u8(); n > 0; n--) teams.push(r.str());
     const stats: string[] = [];
     for (let n = r.u8(); n > 0; n--) stats.push(r.str());
     const classes: ClassDef[] = [];
@@ -110,7 +113,7 @@ export class Decoder {
       for (let n = r.u8(); n > 0; n--) upgrades.push(r.u8());
       classes.push({ id, name, level, fov, barrels, upgrades });
     }
-    return { t: "init", id, w, h, classes, stats };
+    return { t: "init", id, w, h, classes, stats, mode, teams };
   }
 
   private state(r: Reader): StateMsg {
@@ -129,6 +132,7 @@ export class Decoder {
       cls: r.u8(),
       fov: r.f32(),
       alive: r.u8() !== 0,
+      team: r.u8(),
       upg: [],
     };
     for (let n = r.u8(); n > 0; n--) me.upg.push(r.u8());
@@ -148,12 +152,14 @@ export class Decoder {
         e.h = r.frac();
         e.c = r.u8();
         e.l = r.u8();
+        e.t = r.u8();
         if (flags & FLAG_NAME) this.names.set(i, r.str());
         e.n = this.names.get(i) ?? "";
         e.mine = (flags & FLAG_MINE) !== 0;
         e.p = (flags & FLAG_SHIELD) !== 0;
       } else if (kind === KIND_BULLET) {
         e.mine = (r.u8() & FLAG_MINE) !== 0;
+        e.t = r.u8();
       } else if (kind === KIND_SHAPE) {
         e.s = r.u8();
         e.a = r.angle();
@@ -162,12 +168,13 @@ export class Decoder {
       ents[k] = e;
     }
 
-    let lb: LBEntry[] | null = null;
+    let lb: Leaderboard | null = null;
     if (r.u8()) {
-      lb = [];
+      lb = { rows: [], teams: [] };
       for (let n = r.u8(); n > 0; n--) {
-        lb.push({ n: r.str(), s: r.u32(), c: r.u8(), me: r.u8() !== 0 });
+        lb.rows.push({ n: r.str(), s: r.u32(), c: r.u8(), t: r.u8(), me: r.u8() !== 0 });
       }
+      for (let n = r.u8(); n > 0; n--) lb.teams.push(r.u32());
     }
     return { t: "state", ents, me, lb };
   }

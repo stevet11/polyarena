@@ -6,6 +6,7 @@ export const COLORS = {
   outside: "rgba(0,0,0,0.16)",
   self: "#00b2e1",
   enemy: "#f14e54",
+  teams: ["#00b2e1", "#f14e54", "#00e16e", "#bf7ff5"],
   barrel: "#999999",
   square: "#ffe869",
   triangle: "#fc7677",
@@ -16,6 +17,12 @@ export const COLORS = {
 };
 
 const OUTLINE_ALPHA = 0.5;
+
+/** Fill colour for a tank or bullet: team colour in team mode, else mine/enemy. */
+export function tankColor(e: Ent): string {
+  if (e.t) return COLORS.teams[(e.t - 1) % COLORS.teams.length];
+  return e.mine ? COLORS.self : COLORS.enemy;
+}
 
 function darken(hex: string, amount = 0.25): string {
   const n = parseInt(hex.slice(1), 16);
@@ -108,10 +115,10 @@ export class Renderer {
           this.drawShape(e);
           break;
         case KIND_BULLET:
-          this.drawBullet(e, !!e.mine);
+          this.drawBullet(e);
           break;
         case KIND_TANK:
-          this.drawTank(e, classes[e.c ?? 0], !!e.mine);
+          this.drawTank(e, classes[e.c ?? 0]);
           break;
       }
     }
@@ -151,14 +158,14 @@ export class Renderer {
     ctx.restore();
   }
 
-  private drawBullet(e: Ent, mine: boolean): void {
+  private drawBullet(e: Ent): void {
     const { ctx } = this;
     ctx.beginPath();
     ctx.arc(e.x, e.y, e.r, 0, Math.PI * 2);
-    this.fillStroke(mine ? COLORS.self : COLORS.enemy, Math.max(2, e.r * 0.25));
+    this.fillStroke(tankColor(e), Math.max(2, e.r * 0.25));
   }
 
-  private drawTank(e: Ent, cls: ClassDef | undefined, mine: boolean): void {
+  private drawTank(e: Ent, cls: ClassDef | undefined): void {
     const { ctx } = this;
     const R = e.r;
     ctx.save();
@@ -184,7 +191,14 @@ export class Renderer {
     }
     ctx.beginPath();
     ctx.arc(0, 0, R, 0, Math.PI * 2);
-    this.fillStroke(mine ? COLORS.self : COLORS.enemy, 3);
+    this.fillStroke(tankColor(e), 3);
+    if (e.mine && e.t) {
+      // in team mode everyone on the team shares a colour: mark our own tank
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 0.35, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(255,255,255,0.55)";
+      ctx.fill();
+    }
     if (e.p) {
       ctx.beginPath();
       ctx.arc(0, 0, R + 6, 0, Math.PI * 2);

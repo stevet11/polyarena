@@ -85,6 +85,7 @@ net.onMessage = (m: ServerMsg) => {
       world = { w: m.w, h: m.h };
       classes = m.classes;
       ui.setClasses(classes);
+      ui.setTeams(m.teams);
       ui.buildStats(m.stats);
       break;
     case "state":

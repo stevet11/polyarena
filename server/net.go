@@ -52,7 +52,7 @@ func serveWS(w *World) http.HandlerFunc {
 			knownNames: map[uint32]struct{}{},
 		}
 		c.player = w.AddPlayer(c)
-		c.Send(encodeInit(c.player.ID))
+		c.Send(encodeInit(c.player.ID, w.mode, w.nTeams))
 		go c.writePump()
 		c.readPump()
 	}

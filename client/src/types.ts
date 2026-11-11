@@ -32,6 +32,7 @@ export interface Ent {
   l?: number; // tank level
   n?: string; // tank name
   p?: boolean; // tank spawn shield
+  t?: number; // team (1-based), 0 or undefined = none
   mine?: boolean; // belongs to the viewing player
 }
 
@@ -51,14 +52,24 @@ export interface Me {
   fov: number;
   upg: number[];
   alive: boolean;
+  team: number; // 0 in FFA
 }
 
 export interface LBEntry {
   n: string;
   s: number;
   c: number;
+  t: number; // team, 0 = none
   me: boolean;
 }
+
+export interface Leaderboard {
+  rows: LBEntry[];
+  teams: number[]; // score per team (index 0 = team 1), empty in FFA
+}
+
+export const MODE_FFA = 0;
+export const MODE_TEAMS = 1;
 
 export interface InitMsg {
   t: "init";
@@ -67,13 +78,15 @@ export interface InitMsg {
   h: number;
   classes: ClassDef[];
   stats: string[];
+  mode: number;
+  teams: string[]; // team names, empty in FFA
 }
 
 export interface StateMsg {
   t: "state";
   ents: Ent[];
   me: Me;
-  lb: LBEntry[] | null; // null = unchanged since the last frame
+  lb: Leaderboard | null; // null = unchanged since the last frame
 }
 
 export interface DeadMsg {

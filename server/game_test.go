@@ -142,3 +142,109 @@ func TestClassTreeIsConsistent(t *testing.T) {
 		}
 	}
 }
+
+func newTeamWorld(n int) *World {
+	return &World{players: map[uint32]*Player{}, mode: ModeTeams, nTeams: n}
+}
+
+func TestTeamsAreBalancedAndKeptAcrossRespawn(t *testing.T) {
+	w := newTeamWorld(3)
+	var ps []*Player
+	for i := 0; i < 6; i++ {
+		ps = append(ps, addTank(w, "p", 100, 100))
+	}
+	var count [MaxTeams + 1]int
+	for _, p := range ps {
+		if p.Team < 1 || p.Team > 3 {
+			t.Fatalf("bad team %d", p.Team)
+		}
+		count[p.Team]++
+	}
+	if count[1] != 2 || count[2] != 2 || count[3] != 2 {
+		t.Fatalf("unbalanced teams: %v", count[1:4])
+	}
+	p := ps[0]
+	team := p.Team
+	p.Ent.HP = 0
+	w.step(Dt)
+	if p.Alive {
+		t.Fatal("player should be dead")
+	}
+	w.Join(p, "p")
+	if p.Team != team {
+		t.Fatalf("team changed on respawn: %d -> %d", team, p.Team)
+	}
+	// spawns in the team's own corner
+	bx := teamBase[team-1][0]*(WorldW-2*TeamBaseRadius) + TeamBaseRadius
+	by := teamBase[team-1][1]*(WorldH-2*TeamBaseRadius) + TeamBaseRadius
+	if math.Hypot(p.Ent.X-bx, p.Ent.Y-by) > TeamBaseRadius {
+		t.Fatalf("spawned at %v,%v, outside base at %v,%v", p.Ent.X, p.Ent.Y, bx, by)
+	}
+}
+
+func TestNoFriendlyFire(t *testing.T) {
+	w := newTeamWorld(2)
+	a := addTank(w, "a", 100, 100)
+	b := addTank(w, "b", 100, 100)
+	c := addTank(w, "c", 100, 100) // back on team 1 with a
+	if a.Team != c.Team || a.Team == b.Team {
+		t.Fatalf("teams %d %d %d", a.Team, b.Team, c.Team)
+	}
+	// c is in a's line of fire, b (enemy) stands behind c; a's bullets must
+	// pass through c and hit b
+	a.Ent.X, a.Ent.Y = 100, 100
+	c.Ent.X, c.Ent.Y = 250, 100
+	b.Ent.X, b.Ent.Y = 400, 100
+	b.Ent.HP = 1
+	a.In = Input{Aim: 0, Fire: true}
+	for i := 0; i < TickRate*2 && b.Alive; i++ {
+		w.step(Dt)
+		// hold the targets still so body contact can't be blamed
+		c.Ent.X, c.Ent.Y, c.Ent.VX, c.Ent.VY = 250, 100, 0, 0
+		if b.Ent != nil {
+			b.Ent.X, b.Ent.Y, b.Ent.VX, b.Ent.VY = 400, 100, 0, 0
+		}
+	}
+	if c.Ent.HP < c.Ent.MaxHP {
+		t.Fatalf("teammate took damage: %v/%v", c.Ent.HP, c.Ent.MaxHP)
+	}
+	if b.Alive {
+		t.Fatal("enemy behind the teammate should have been killed")
+	}
+	if a.Kills != 1 {
+		t.Fatalf("kills = %d, want 1", a.Kills)
+	}
+	// teammates ramming each other: pushed apart but no damage
+	a.In = Input{}
+	a.Ent.X, a.Ent.Y = 300, 300
+	c.Ent.X, c.Ent.Y = 310, 300
+	for i := 0; i < TickRate; i++ {
+		w.step(Dt)
+	}
+	if a.Ent.HP < a.Ent.MaxHP || c.Ent.HP < c.Ent.MaxHP {
+		t.Fatal("teammates damaged each other by contact")
+	}
+	if math.Hypot(a.Ent.X-c.Ent.X, a.Ent.Y-c.Ent.Y) < a.Ent.Radius+c.Ent.Radius-1 {
+		t.Fatal("teammates were not pushed apart")
+	}
+}
+
+func TestTeamScoresInLeaderboard(t *testing.T) {
+	w := newTeamWorld(2)
+	a := addTank(w, "a", 100, 100)
+	b := addTank(w, "b", 100, 100)
+	a.Score, b.Score = 50, 70
+	ts := w.teamScores()
+	if len(ts) != 3 || ts[a.Team] != 50 || ts[b.Team] != 70 {
+		t.Fatalf("team scores = %v", ts)
+	}
+	lb := encodeLeaderboard([]*Player{b, a}, a, ts)
+	// ... u8 nTeams, 2×u32
+	n := lb[len(lb)-9]
+	if n != 2 {
+		t.Fatalf("nTeams = %d, want 2", n)
+	}
+	if len(encodeLeaderboard(nil, a, nil)) != 2 {
+		t.Fatal("FFA leaderboard should end with a zero team count")
+	}
+}

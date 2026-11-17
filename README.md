@@ -4,6 +4,12 @@ A 2D multiplayer tank arena in the diep.io genre: shoot polygon shapes for XP,
 level up, spend points on stats, branch into stronger tank classes, and fight
 other players. TypeScript + HTML canvas client, Go WebSocket server.
 
+![Title screen](docs/title.png)
+
+![Free-for-all](docs/ffa.png)
+
+![Team mode](docs/teams.png)
+
 ## Run
 
 ```sh
